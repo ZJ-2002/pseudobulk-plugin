@@ -1,0 +1,63 @@
+schema_version = 1
+plugin_name = "pseudobulk"
+
+[image]
+reference = "localhost/autonomics/biotools-py@sha256:21e14c1582a9d4c261c0a23a11864293313ee2b49b9b7d85bcabc89210b48c7e"
+tag = "v1"
+upstream = "anndata 0.11 + scipy sparse"
+license = "BSD-3-Clause"
+
+# 说明：供者×细胞类型 pseudobulk 聚合（方案 §15.3 统计单位规则）。
+# 生物学单位是供者/动物；同一供者的多库、多批次不拆成独立重复。
+# 本节点是 scRNA → 供者层差异分析（DESeq2/limma 下游）之间的桥。
+
+[[nodes]]
+kind = "pseudobulk_counts"
+desc = "Aggregate single-cell h5ad into donor x celltype pseudobulk count matrix"
+doc = """
+输入：单细胞 h5ad（obs 含供者列与细胞类型列）。输出三件：
+1) pseudobulk_counts.tsv —— 基因 × 伪样本 计数矩阵（行=基因，列=伪样本 ID），
+   伪样本 ID 形如 <sample>__<celltype>，可直接喂 DESeq2/limma；
+2) pseudobulk_samples.tsv —— pseudobulk_id / sample / celltype / n_cells 映射表
+   （供统计单位审计：每组独立供者数由此可查）；
+3) pseudobulk.log —— 层选择、整数性、剔除组记录。
+规则来源：方案 §15.3——具有可识别生物学重复时用供者×细胞类型 pseudobulk；
+每组 1 个供者只描述、2 个低精度探索的判断在下游完成，本节点如实输出 n_cells。
+失败处理：列名不存在 → 退出 2；矩阵非整数时打 WARN 并按原值求和（可能是
+已标准化矩阵，解释边界记入 log，下游不得当原始计数建模）。
+min_cells 以下的组被剔除并记录；不自动合并小组。
+"""
+timeout_secs = 7200
+artifact_prefix = "/artifacts/pseudobulk_counts"
+
+[nodes.ports]
+inputs = [{ type = "file" }]
+outputs = [
+  { path = "pseudobulk_counts.tsv", format = "pseudobulk_counts" },
+  { path = "pseudobulk_samples.tsv", format = "pseudobulk_samples" },
+  { path = "pseudobulk.log", format = "pseudobulk_log" },
+]
+
+[nodes.params]
+sample_col = { type = "string", doc = "obs column holding donor/animal identity (biological unit)" }
+celltype_col = { type = "string", doc = "obs column holding cell type annotation" }
+min_cells = { type = "int", default = 10, min = 1, doc = "drop pseudobulk groups with fewer cells" }
+layer = { type = "string", optional = true, doc = "h5ad layer to aggregate; empty = .X" }
+id_schema = { type = "string", default = "sample__celltype", doc = "pseudobulk id pattern (informational; fixed join)" }
+
+[nodes.command]
+interpreter = "python3"
+script_file = "scripts/pseudobulk_counts.py"
+
+[nodes.command.env]
+PB_SAMPLE_COL = "{{ sample_col }}"
+PB_CELLTYPE_COL = "{{ celltype_col }}"
+PB_MIN_CELLS = "{{ min_cells }}"
+PB_LAYER = "{{ layer }}"
+PB_ID_SCHEMA = "{{ id_schema }}"
+
+[nodes.resources]
+network = "isolated"
+cpus = 4
+memory = "8g"
+pull_policy = "never"

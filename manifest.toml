@@ -61,3 +61,53 @@ network = "isolated"
 cpus = 4
 memory = "8g"
 pull_policy = "never"
+
+[[nodes]]
+kind = "h5ad_export_matrix"
+desc = "Export the h5ad X layer to a long-format parquet plus obs/var tables"
+doc = """
+输入：任意 h5ad（引擎自产——X 为 lzf 压缩 CSR 组，h5py 原生识别 filter
+32000——或宿主/上游 anndata 写的均可）。输出四件：
+1) x_matrix.long.parquet —— cell_id/gene/value 三列长表，行组=chunk 个
+   细胞，zstd 压缩。SQL/DataFusion/parquet_sql 的直接输入；
+2) obs.tsv —— 细胞元数据表（首列 cell_id）；
+3) var.tsv —— 基因元数据表（首列 gene_id）；
+4) h5ad_export.log —— 层选择/形状/dtype/非零元数。
+规则来源：2026-10-04 节点审计——引擎原生 h5ad 工厂只有 obs 层，X 层无
+导出路径（此前只能宿主把 X 机械拷进 obs 绕行）；本节点补齐。
+backed='r' 按行块切片，内存有界。稀疏与 dense 矩阵都只导非零元
+（0=未表达，与缺失在下游不可区分，log 已注明）；值 cast float64
+（整数计数 ≤2^53 精确）。
+失败处理：文件非 h5ad/层不存在 → 退出 2。
+解释边界：纯忠实搬运，不归一化不过滤；X 的语义（原始计数 vs 标准化值）
+由上游决定，log 记录 dtype 供下游判断。
+"""
+timeout_secs = 7200
+artifact_prefix = "/artifacts/h5ad_export_matrix"
+
+[nodes.ports]
+inputs = [{ type = "file" }]
+outputs = [
+  { path = "x_matrix.long.parquet", format = "x_matrix_long_parquet" },
+  { path = "obs.tsv", format = "h5ad_obs_table" },
+  { path = "var.tsv", format = "h5ad_var_table" },
+  { path = "h5ad_export.log", format = "pseudobulk_log" },
+]
+
+[nodes.params]
+layer = { type = "string", default = "X", doc = "X or layers/<name>" }
+chunk = { type = "int", default = 2000, min = 100.0, doc = "cells per parquet row group" }
+
+[nodes.command]
+interpreter = "python3"
+script_file = "scripts/h5ad_export_matrix.py"
+
+[nodes.command.env]
+EXPORT_LAYER = "{{ layer }}"
+EXPORT_CHUNK = "{{ chunk }}"
+
+[nodes.resources]
+network = "isolated"
+cpus = 2
+memory = "8g"
+pull_policy = "never"

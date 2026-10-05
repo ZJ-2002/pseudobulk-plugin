@@ -96,8 +96,17 @@ def test_tuple_keys_survive_separator_collision(tmp_path):
     assert sorted(samples["n_cells"].tolist()) == [12, 12]
     assert set(map(tuple, samples[["sample", "celltype"]].values)) == {
         ("donor__state", "type"), ("donor", "state__type")}
-    # 拼接串相同 → 百分号编码后仍必须是两个不同列名。
-    assert len(set(counts.columns)) == 2
+    # fix-review R01：必须检查原始 TSV 表头——pandas 会把重复列名自动重命名
+    # 成 ".1"，经 pandas 读回的 counts.columns 看不到真实重复。
+    raw_header = counts_path.read_text().splitlines()[0].split("\t")
+    raw_ids = [name for name in raw_header[1:]]
+    assert len(raw_ids) == 2 and len(set(raw_ids)) == 2, f"raw header ids not unique: {raw_ids}"
+    assert all(".1" not in name for name in counts.columns), "pandas renamed duplicate columns"
+    # counts 原始表头与 metadata 的 sample_id 逐字一致（DESeq2 身份契约）。
+    assert samples["sample_id"].tolist() == raw_ids
+    assert counts.columns.tolist() == raw_ids
+    # "_" 编码为 %5F 后，连接符 "__" 不再有歧义。
+    assert sorted(raw_ids) == sorted(["donor%5F%5Fstate__type", "donor__state%5F%5Ftype"])
     # kept 排序：("donor","state__type") 在 ("donor__state","type") 之前。
     assert counts.loc["g0"].tolist() == [0, 3 * n]
     assert counts.loc["g1"].tolist() == [4 * n, 0]

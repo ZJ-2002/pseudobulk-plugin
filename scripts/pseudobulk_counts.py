@@ -153,15 +153,22 @@ for key in sorted(set(tuple_index) - set(sizes)):
     log_lines.append(f"dropped\t{key[0]}__{key[1]}\tn_cells={tuple_index[key]}\t<min_cells={MIN_CELLS}")
 
 # 输出 ID：默认 "<sample>__<celltype>" 拼接；不同元组拼出同一串时改百分号编码
-# （"_"→%5F，故 "__" 只可能是连接符），保证 ID 单射、两组不会共用一个列名。
+# 回退。注意 urllib.parse.quote 对 "_"（RFC 3986 unreserved 字符）永远不转义，
+# safe="" 也不行，所以必须显式 replace 把 "_"→"%5F"；这样两个分量都不含 "_"，
+# "__" 只可能是连接符，拼接严格单射（fix-review R01）。
+def _encode_part(value: str) -> str:
+    return quote(value, safe="").replace("_", "%5F")
+
+
 ids = [f"{sample_value}__{celltype_value}" for sample_value, celltype_value in kept]
 id_encoding = "plain"
 if len(set(ids)) != len(ids):
-    ids = [quote(sample_value, safe="") + "__" + quote(celltype_value, safe="") for sample_value, celltype_value in kept]
+    ids = [_encode_part(sample_value) + "__" + _encode_part(celltype_value) for sample_value, celltype_value in kept]
+    assert len(set(ids)) == len(ids), "percent-encoded ids must be injective"
     id_encoding = "percent"
     log_lines.append(
         "WARN pseudobulk id strings collide across distinct (sample, celltype) tuples; "
-        "switched to percent-encoded ids (plan §15.3 audit F07)"
+        "switched to percent-encoded ids (plan §15.3 audit F07; fix-review R01)"
     )
 log_lines.append(f"id_encoding\t{id_encoding}")
 
